@@ -1,0 +1,267 @@
+In this project, we will create an application that utilizes Twitter and Google Maps API. We
+will use Twitter OAuth2 to authenticate the user using Twitter, and we will use Google Maps
+API v3 to display the friends of the user on a Google map. We will visualize the location of
+the user's Twitter friends using this application. As shown in the following screenshot, we
+will see our friends with their corresponding locations on the map:
+
+In the first task, we will create a login using Twitter and allow the users to authenticate using
+this. We will use the omniauth gem and add some custom methods in order to handle the
+session. OmniAuth is a solution for authentication that uses rack via multiple third-party OAuth
+providers such as Google, Twitter, Facebook, and GitHub. The omniauth gem ( https://
+github.com/intridea/omniauth ) provides the rack-based methods of authentication
+and sessions. Individual access methods for each provider is called a strategy. Each strategy
+is extracted into different gems. So, if we want to implement Twitter and Facebook, we need
+three gems: omniauth , omniauth-twitter , and omniauth-facebook .
+
+
+1.	 We will install omniauth and omniauth-twitter , the Twitter strategy gem from
+the master branch, by adding it to the Gemfile and run bundle install , as
+shown in the following code:
+Gemfile
+gem 'omniauth'
+gem 'omniauth-twitter', :github => 'arunagw/omniauth-twitter'
+tweetmap$ bundle install
+
+2.	 We will create a file called secrets.yml inside the config folder. This file should
+contain secret_key_base and all the secret keys to be used in the app. We will
+explore this feature in detail in our debriefing section. Make sure you generate a
+different set of keys for development and production:
+
+# Be sure to restart your server when you modify this file.
+
+# Your secret key is used for verifying the integrity of signed cookies.
+# If you change this key, all old signed cookies will become invalid!
+
+# Make sure the secret is at least 30 characters and all random,
+# no regular words or you'll be exposed to dictionary attacks.
+# You can use `rake secret` to generate a secure secret key.
+
+# Make sure the secrets in this file are kept private
+# if you're sharing your code publicly.
+
+development:
+  secret_key_base: 2d26bdafc03ab4b1228b9d219e76464807c7ee72d89440659c6dbb975b5c03fb356dd94a0df2013e82038ceeac8cbf6905f9d47211e7b1107b705a872823f10a
+  twitter_consumer_key: Qm9XjYDak8E6C7hLxNqle30jg
+  twitter_consumer_secret: UJNbc9rbWU4XnMirZuaJoDfCRvnGFOrWYBdeLr9Xc6WLVYqwTP
+
+
+test:
+  secret_key_base: b74b1ca42c13dd8162fe36a55a785676766f383c7e962f426548f47446c60d3ac4eab3e2082b2eb9ed99238c9c5f56e9318dd64ef649747faa4a089c0e23bbd1
+  twitter_consumer_key: Qm9XjYDak8E6C7hLxNqle30jg
+  twitter_consumer_secret: UJNbc9rbWU4XnMirZuaJoDfCRvnGFOrWYBdeLr9Xc6WLVYqwTP
+# Do not keep production secrets in the repository,
+# instead read values from the environment.
+production:
+  secret_key_base: <%= ENV["SECRET_KEY_BASE"] %>
+  twitter_consumer_key: Qm9XjYDak8E6C7hLxNqle30jg
+  twitter_consumer_secret: UJNbc9rbWU4XnMirZuaJoDfCRvnGFOrWYBdeLr9Xc6WLVYqwTP
+
+3.	 We will generate a model for the user. This model will hold the values for the
+provider (Twitter), such as the name of the user, the screen name, or the Twitter
+handle, oauth_token , expires_at (expiration time of oauth_token ), and
+location of the user:
+tweetmap$rails g model user provider uid name oauth_token oauth_secret oauth_expires_at:datetime avatar address
+
+6.	 After adding it to the user model, we need a mechanism to get these values. This is
+possible only when we are able to start a session with Twitter.
+
+7.	 To set up and handle a Twitter session, we will need a controller for sessions called
+session_controller.rb . We will add methods to create and destroy the
+session, that is, the signup, login, and sign out options:
+tweetmap$ rails g controller sessions
+app/controllers/session_controller.rb
+class SessionsController < ApplicationController
+	def create
+      auth = request.env["omniauth.auth"]
+      user = User.find_by_provider_and_uid(auth["provider"], 
+      	auth["uid"]) || User.create_with_omniauth(auth)session[:user_id] = user.id
+      redirect_to root_url, :notice => "Logged In Successfully"
+    end
+
+    def destroy
+    	session[:user_id] = nil
+    	redirect_to root_url, :notice =>"Logged Out Successfully"
+    end
+end
+
+8.	 For the controller to work, we need to add the routes in our routes.rb file:
+config/routes.rb
+match "/auth/:provider/callback" =>"sessions#create", via: [:get, :post]
+match 'signout', to: 'sessions#destroy', as: 'signout', via: [:get, :post]
+
+9.	 Now that we have created a session, we will have to add a method to access
+the user object while in the session. We will do this by creating an object called
+current_user in our application_controller.rb file:
+app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+# Prevent CSRF attacks by raising an exception.
+# For APIs, you may want to use :null_session instead.
+protect_from_forgery with: :exception
+helper_method :current_user
+private
+def current_user
+@current_user ||= User.find(session[:user_id]) if
+session[:user_id]
+end
+end
+
+10.	 Also, we need to create a link to log in using Twitter. In our views/layouts/
+application.html.erb file, we will add a Sign In with Twitter link:
+app/views/layouts/application.html.erb
+<div class="navbar-collapse collapse" id="navbar-main">
+<ul class="nav navbar-nav navbar-right">
+<% if current_user %>
+<li>Welcome, <%= current_user.name %><%= image_tag "#{current_
+user.avatar}" %><%= link_to "Sign Out", signout_path %></li>
+<% else %>
+<li><%= link_to "Sign in with Twitter", "/auth/twitter" %></li>
+<% end %>
+</ul>
+</div>
+для проверки приложения создать пустую страницу, она отобразится в пределах layout где есть ссылка на твиттер
+
+
+In order to get the details of a user from Twitter, we will use the interface to the Twitter
+API, the twitter gem. In this task, we will pull some details of the user such as the Twitter
+username, the Twitter handle, the location of the user, and the user's avatar. We will store
+this information as a part of our user table. Friends are the users that are either followed
+by the user or follow the user.
+
+We will now go ahead and access the Twitter data using the Twitter API:
+1.	 We will first add some more columns to our user table with the following code:
+tweetmap$ rails g migration AddDetailsToUsers address:string avatar:string
+
+3.	 We will save the link to avatar of the user and the user's location.
+4.	 We will now add the twitter gem to the Gemfile and run bundle install ,
+as shown in the following code:
+Gemfile
+gem 'twitter', :github => 'sferik/twitter'
+5.	 We will now generate a model to save the friends' data:
+Tweetmap$ rails g model friend name screen_name location latitude:float longitude:float user_id:integer
+6.	 We will also edit the migration to add decimal precision in our latitude and
+longitude fields:
+class CreateFriends < ActiveRecord::Migration
+def change
+create_table :friends do |t|
+t.string :name
+t.string :screen_name
+t.string :location
+t.integer :user_id
+t.float :lat, {:precision=>10, :scale=>6}
+t.float :lng, {:precision=>10, :scale=>6}
+t.timestamps
+end
+end
+end
+7.	 We will first create a home controller with an index action:
+tweetmap $ rails g controller home index
+
+8.	 In our home controller, we will create a client for our Twitter API. This will require
+the consumer key and consumer secret. Twitter supplies the OAuth token and
+OAuth secret as a part of the session parameters. We also need to initiate this in
+order to get the data related to the user's friends:
+app/controllers/home_controller.rb
+def fetch_friend_data
+client = Twitter::REST::Client.new do |config|
+config.consumer_key
+= "Rd5s5s82FAiUD1KufnrnQ"
+config.consumer_secret
+=
+"6q8LouMcq8qE1aZa5Mn5nONdwpzchrmXOIlqEYl9CU"
+config.access_token
+= "#{current_user.oauth_token}"
+config.access_token_secret = "#{current_user.oauth_secret}"
+end
+end
+
+9.	 We will make a call on the Twitter API to fetch the last 20 friends of the user who is
+logged in:
+app/controllers/home_controller.rb
+@friends = client.friends.take(20)
+
+10.	 We will create a class method in which the user ID, the array of the friend's location
+coordinates, and the friend object will be passed as arguments. This method will
+save the friends' data to the friends table in the database:
+app/models/friend.rb
+def self.get_friend_data(friend,location_value,user_id)
+self.where(
+name: friend.name,
+screen_name: friend.screen_name,
+location: friend.location,
+user_id: user_id).first_or_create
+end
+
+11.	 We will loop through the friends' data, geocode their location, and get the
+coordinates. We will save these values to the database:
+app/controllers/home_controller.rb
+@friends.each do |f|
+location = f.location
+Friend.get_friend_data(f,current_user.id)
+end
+
+12.	 As you can see, we are saving the values to the database using a method called
+get_friend_data and passing some arguments to this. We need to define that
+method in our model:
+app/controllers/home_controller.rb
+Friend.get_friend_data(f,current_user.id)
+
+13.	 We will create a route and a link to run this from the home page, as shown in the
+following code:
+config/routes.rb
+get "home/fetch_friend_data"
+
+
+To map the friends of the user to the map, the most important information required is the
+latitude and longitude. As we saw previously, Twitter provides the location of the user, and
+we will geocode it to find the coordinates. We will use a Ruby gem called geocoder in order
+to get this.
+
+
+5.	 We will also use the Geocoder.coordinates method to find the location of the
+user. First, we will add the migration to save our OAuth credentials:
+$rails g migration add_omniauth_and_location_to_users latitude longitude
+class AddCoordinatesToUsers < ActiveRecord::Migration
+def change
+add_column :users, :latitude, :string
+add_column :users, :longitude, :string
+end
+end
+
+Now, we already have the Twitter data of the user, the data of user's friends, and also their
+location coordinates. From here on, we need to prepare the data to be displayed on the
+Google map. We need to display multiple markers on the map and associate our data with
+the markers.
+
+In this task, we will prepare the data for the map:
+1.	 We will start by creating a controller for the map. This controller will be responsible
+for passing the data required for the map to the Google Maps JavaScript API:
+tweetmap$ rails g controller map_display index
+
+
+<script>
+// var locations = <%=raw @markers %>;
+// var marker, i;
+// for (i = 0; i < locations.length; i++) {
+// 	marker = new google.maps.Marker({
+//     position: new google.maps.LatLng(locations[i][1], locations[i][2]), map: map });
+//     google.maps.event.addListener(marker, 'click', (function(marker, i) {
+//    return function() {
+//    	infowindow.setContent(locations[i][0]);
+//    	infowindow.open(map, marker);}})(marker, i));
+//     }
+</script>
+
+
+<script>
+// var locations = <%=raw @markers %>;
+// var map = new google.maps.Map(document.getElementById('map'),
+// {zoom: 2, center: new google.maps.LatLng(0, 0), mapTypeId: google.maps.MapTypeId.ROADMAP });
+// var infowindow = new google.maps.InfoWindow();
+// var marker, i;
+// for (i = 0; i < locations.length; i++) {
+// 	marker = new google.maps.Marker({
+// 		position: new google.maps.LatLng(locations[i][1], locations[i][2]), map: map });
+// google.maps.event.addListener(marker, 'click', (function(marker, i) {
+// return function() {infowindow.setContent(locations[i][0]); infowindow.open(map, marker);} })(marker, i));
+// }
+</script>

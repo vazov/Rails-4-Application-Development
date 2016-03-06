@@ -1,0 +1,371 @@
+In this project, we will create an analytics dashboard, which will give the user an insight on
+which kind of content is getting what kind of traffic. There are three types of behavior that
+we will track with our application:
+ - Clicks
+ - Views
+ - Visits
+Clicks and views will be tracked for the users who have logged in. Visits are for the users who
+unknown and are are not logged in. We will use MongoDB to track and store this data. Also,
+we will create charts of different types in order to visualize our data. MongoDB is scalable
+and is meant to be fault tolerant.
+
+In this task, we will work towards setting up the base for our application. This includes
+setting up mongoid, rolify, and creating articles. This task is more like a revision of some of
+the concepts that we have covered in the book already. The new thing here is that we are
+doing it all with Mongoid.
+
+In order to start working on this project, we will first have to add the mongoid gem to
+the Gemfile :
+Gemfile
+gem 'mongoid', github: 'mongoid/mongoid'
+Bundle the application and run the mongoid generator:
+$ rails g mongoid:config
+
+The steps for creating a MongoDB database are as follows:
+1.	 We will take the first step in this task by setting up the skeleton of the application.
+2.	 We will install rolify from the master branch by adding it to the Gemfile and
+run bundle :
+Gemfile
+gem 'rolify', :github => 'EppO/rolify'
+authorly $bundle install
+3.	 We will then generate the configuration file for rolify:
+
+добавляем пользователя
+rails g devise:install
+rails g devise user
+rails g rolify Role User -o mongoid
+
+5.	 We will generate an article's model, view, and controller. This will allow the users
+to create articles:
+authorly$ rails g scaffold article title:string body:text
+
+6.	 MongoDB generates pretty ugly URLs, with 12-byte long Binary JSON (BSON) type
+IDs trailing them. We need to create good looking URLs with MongoDB. For this, we
+will use the mongoid_slug gem with our application. Again, here we are using the
+master branch of GitHub to maintain the compatibility with Rails 4 and mongoid 4
+beta versions:
+Gemfile
+gem 'mongoid_slug', github: 'digitalplaywright/mongoid-slug'
+
+8.	 In order to set up the slugging mechanism, we will first include the Mongoid::Slug
+module in our article model:
+app/models/article.rb
+class Article
+include Mongoid::Document
+include Mongoid::Slug
+field :title, type: String
+field :body, type: String
+field :user_id, type: String
+belongs_to :user
+end
+9.	 Also, we need to store the history of our URL slugs to avoid 404 errors in case
+the slug changes. This will be stored in an array inside the _slug field in the
+article model:
+app/models/article.rb
+class Article
+include Mongoid::Document
+include Mongoid::Slug
+field :title, type: String
+field :body, type: String
+field :_slugs, type: Array, default: []
+field :user_id, type: String
+slug :title, :history => true
+end
+
+
+10.	 We will set up an article list such that it can be viewed by anyone without logging in
+as well as by people who are logged in. Before this step, please make sure devise is
+installed on your system:
+app/controllers/articles_controller.rb
+before_filter :authenticate_user!, except: [:show, :index]
+def index
+@articles = Article.all
+end
+11.	 Lastly, do not forget to add a slug and user ID to the permitted parameters in your
+articles_controller file:
+app/controllers/articles_controller.rb
+private
+# Use callbacks to share common setup or constraints between
+actions.
+def set_article
+@article ||= Article.find(params[:id])
+end
+# Never trust parameters from the scary internet, only allow
+the white list through.
+def article_params
+params.require(:article).permit(:title, :body, :_slugs, :user_id)
+end
+
+
+There is a difference between tracking clicks and tracking impressions. Clicks can be the
+traffic that is received through an organic search via search engines such as Google, or
+via searching the website, or whenever a click action is performed. Impression, on the
+other hand, is how many times the page has been viewed. It is possible that someone
+has bookmarked the page and repeatedly read an article. In this case, the act will be the
+counting of impressions. In our application, both clicks and impressions will be bound to the
+show method because that's what is mainly required to render the page.
+
+We will now go ahead and create a click-tracking mechanism for our articles:
+1.	 We will first create a model for clicks and associate it with the article:
+app/models/click.rb
+class Click
+  include Mongoid::Document
+  include Mongoid::Timestamps::Created
+  include RecordData
+  field :ip, type: String
+  field :url, type: String
+  field :article_id, type: String
+  field :user_id, type: String
+  belongs_to :article
+end
+2.	 In our article, we will associate our article model with the clicks too:
+app/models/article.rb
+has_many :clicks
+
+3.	 We will first add methods to get the full path of the URL and get the IP address of
+the user clicking in our show method, inside our articles_controller file:
+app/controllers/articles_controller.rb
+def show
+@url = request.fullpath.to_s
+@ip = request.remote_ip
+end
+
+4.	 Now, we will track the click action whenever it is performed and the show method
+is fired. Also, we will save article_id with our click. We will do this with the
+following code:
+
+app/models/concerns/record_data.rb
+module RecordData
+  extend ActiveSupport::Concern
+  included do
+    def self.record(url, ip, article_id, user_id)
+      self.create!(url: url, ip: ip, article_id: article_id, user_id: user_id)
+    end
+  end
+end
+
+app/controllers/articles_controller.rb
+def show
+    @clicks = @article.track_clicks_per_article
+    @url = request.fullpath.to_s
+    @ip = request.remote_ip
+    if user_signed_in? && (current_user.id != @article.user_id)
+      Click.record(url, ip, @article.id, current_user.id.to_s)
+    elsif !user_signed_in?
+      Click.record(url, ip, country, city, @article.id,"anonymous")
+    end
+  end
+
+5.	 Now, we will have the click recorded every time a user clicks on the show method.
+For an anonymous user, the query looks like the following code:
+MOPED: 127.0.0.1:27017 INSERT
+database=project6_development collection=clicks
+documents=[{"_id"=>BSON::ObjectId
+('528243f37277750cd90a0000'), "url"=>"/articles/
+the-body-of-lies", "ip"=>"127.0.0.1",
+"article_id"=>BSON::ObjectId('528011687277750d4a000000'),
+"user_id"=>"anonymous"}] flags=[]
+
+
+6.	 For a logged-in user, the query looks like the following code:
+MOPED: 127.0.0.1:27017 INSERT
+database=project6_development collection=clicks
+documents=[{"_id"=>BSON::ObjectId
+('5283648d7277750b6a050000'), "url"=>"
+/articles/the-body-of-lies", "ip"=>"127.0.0.1",
+"article_id"=>BSON::ObjectId('528011687277750d4a000000'),
+"user_id"=>"527ce7927277750d00000000"}] flags=[]
+
+
+In order to track visits and impressions, we will take a slightly different approach. We will
+use a gem called impressionist to track the page impressions. At the end of the task, we
+will also debate whether the solution is scalable or not. The difference between impressions
+and clicks lies in how the article is accessed. So, for example, if a user writes an article that
+is linked in another website and someone clicks on the link, this would count as a click.
+However, if a link is bookmarked and the user tries to access it from the bookmarks, it
+would count as an impression. Hence, we have tied both impressions and clicks to the
+show method.
+
+
+1.	 We will first add the impressionist gem to our Gemfile and run bundle . Even
+here, we will keep our gem to master head so that we grab the latest version that is
+compatible with Rails 4 and mongoid 4:
+gem 'impressionist'
+
+2.	 We will now generate the impressionist initializer:
+:~/authorly$ rails g impressionist --orm mongoid
+invoke mongoid
+create config/initializers/impression.rb
+
+3.	 The is_impressionable method in the article model will allow
+impressionist to access the article mode:
+app/models/article.rb
+class Article
+  include Mongoid::Document
+  include Mongoid::Slug
+  field :title, type: String
+  field :body, type: String
+  field :_slugs, type: Array, default: []
+  field :user_id, type: String
+
+  is_impressionable
+  
+  slug :title, :history => true
+  belongs_to :user
+  has_many :clicks
+end
+
+4.	 After associating with the model, we will have to pass the article object to
+impressionist :
+app/controllers/articles_controller.rb
+def show
+    #@clicks = @article.track_clicks_per_article
+    impressionist(@article, message:"A User has viewed your article")
+
+5.	 Also, we can set a filter to run impressionist for specific actions:
+app/controllers/articles_controller.rb
+class ArticlesController < ApplicationController
+before_action :set_article, only: [:show, :edit, :update, :destroy]
+before_filter :authenticate_user!, except: [:show, :index]
+impressionist :actions=>[:show]
+
+6.	 We are now ready to track the page views. We, however, do not have a collection for
+the impressions yet. So, we will generate a model for impression :
+rails g model page_impression impressionable_type impressionable_id user_id controller_name action_name view_name request_hash ip_address session_hash message referrer
+
+8.	 We just need to ensure that the model is being saved properly. So, we will navigate
+to the show method to see the queries:
+Processing by ArticlesController#show as HTML
+Parameters: {"id"=>"the-body-of-lies"}
+MOPED: 127.0.0.1:27017 QUERY
+database=project6_
+development collection=articles selector={"_slugs"=>{"$in"=>["the-
+body-of-lies"]}} flags=[] limit=1 skip=0 batch_size=nil fields=nil
+runtime: 0.8295ms
+MOPED: 127.0.0.1:27017 QUERY
+database=project6_
+development collection=users selector={"$query"=>{"_id"=>BSON:
+:ObjectId('527ce7927277750d00000000')}, "$orderby"=>{:_id=>1}}
+flags=[] limit=-1 skip=0 batch_size=nil fields=nil runtime:
+0.5881ms
+MOPED: 127.0.0.1:27017 INSERT
+database=project6_
+development collection=impressions documents=[{"_id"=>BSON::Object
+Id('5283648d7277750b6a030000'), "impressionable_type"=>"Article",
+"impressionable_id"=>"the-body-of-lies", "controller_
+name"=>"articles", "action_name"=>"show", "user_id"=>BSON::Object
+Id('527ce7927277750d00000000'), "request_hash"=>"871961ef69818fd7
+f9e0be0f510f583fd387144ef4e919ed132982144e930f8a", "session_hash"
+=>"457126f191ff2b6da6d92c9f6ceaa62f", "ip_address"=>"127.0.0.1",
+"referrer"=>"http://localhost:3000/articles", "updated_at"=>2013-
+11-13 11:37:49 UTC, "created_at"=>2013-11-13 11:37:49 UTC}]
+flags=[]
+COMMAND
+database=project6_
+development command={:getlasterror=>1, :w=>1} runtime: 0.7574ms
+
+9.	 In order to display the impressions, we just need to make a call to the
+impressionist_count method on the article object:
+app/views/articles/show.html.erb
+<%= "#{@article.impressionist_count} views so far!" %>
+
+
+The data is in the database now. However, we still need to read and analyze it. We will query
+our database in different ways and get the data based on this. We will track the total number
+of clicks on an article, the total number of impressions on an article, and the total number of
+unique impressions per day. We will use MongoDB queries and the map-reduce function to
+achieve this.
+The map-reduce function is a combination of two procedures:
+ - Map: This is a procedure that filters and sorts the records
+ - Reduce: This is an operation that performs the remaining function, for example,
+counting
+Clicks and impressions increase really quickly in huge volumes, and normal queries can be
+too slow; the performance could take a beating because of this. In case we need to collect
+our data in different ways, we can use the map-reduce function.
+
+Let us first work with getting the data for the number of clicks and then for the number of
+impressions in this task:
+1.	 In order to get the number of clicks, we will get all the clicks associated with a
+particular article and count them. This is an instance method:
+app/models/article.rb
+def track_clicks_per_article
+clicks = Click.where(article_id: "#{self.id}")
+click_count = clicks.count
+end
+
+2.	 For a logged-in user, we can display the click count on the article's show page;
+however, this will be displayed only to the logged-in user. The following code
+describes how we do this inside the show method:
+app/controllers/articles_controller.rb
+def show
+impressionist(@article,message:"A User has viewed your
+article")
+url = request.fullpath.to_s
+ip = request.remote_ip
+if user_signed_in? && (current_user.id != @article.user_id)
+@clicks = @article.track_clicks_per_article
+Click.record(url, ip, @article.id, current_user.id.to_s)
+elsif !user_signed_in?
+
+3.	 In show.html.erb , @clicks displays the number of clicks:
+<% if user_signed_in? %><%= @clicks %> clicks so far!<% end %>
+
+4.	 In order to count the daily clicks, we will use the map-reduce function of
+MongoDB. We will first write the map function. The this.created_at and
+this.article_id methods will basically select these fields from the click
+collection. They will also initiate a count:
+app/models/click.rb
+def self.clicks_per_article_per_day
+map = %Q{
+function() {
+emit({created_at: this.created_at, article_id: this.article_
+id}, {count: 1});
+}
+}
+end
+5.	 Our reduce function will count the number of times article_id has occurred on
+a created_at date. This will generate an array with a daily count of clicks:
+app/models/click.rb
+reduce = %Q{
+function(key, values) {
+var count = 0;
+values.forEach(function(v) {
+count += v['count'];
+});
+return {count: count};
+}
+}
+
+
+
+
+For content creators, "clicks per day" is a very important metric. They love to see the
+interaction and engagement happening on a day-to-day basis. We can plot the click data for
+the authors of the articles using the morris.js charts where morris.js is a library for
+plotting the data as line charts, bar charts, and donut charts. This is the reporting part of
+our analytics dashboard.
+
+1.	 The morris.js library comes packaged as a gem. It also depends on an SVG that
+renders a canvas library called raphael js .
+Gemfile
+gem 'morrisjs-rails'
+gem 'raphael-rails'
+2.	 We will add this to the Gemfile and run bundle .
+3.	 We will then define the JavaScript in our application.js file. We have to ensure
+that these lines are placed before require turbolinks and require_tree :
+app/assets/javascripts/application.js
+//= require raphael
+//= require morris
+//= require turbolinks
+//= require_tree .
+4.	 Also, we will add the morris.js style sheet to our asset pipeline:
+app/assets/stylesheets/application.css
+*= require morris
+*= require_tree .
+5.	 In order to feed data to the JavaScript charts, we will have to prepare our data in the
+JSON format. To do this, first call the clicks_per_article_per_day method. As
+you can see, we have created a new method called clicks for this:
+app/controllers/admin/dashboard_controller.rb
+def clicks
+@daily_clicks = Click.clicks_per_article_per_day
+end

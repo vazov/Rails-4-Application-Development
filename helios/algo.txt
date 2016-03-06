@@ -1,0 +1,340 @@
+A Content Management System (CMS) is essentially
+a software that helps you to easily and effectively manage the content of a website or a web
+application. There are several perspectives on CMS, with Drupal, Joomla!, and WordPress
+being the really popular ones. However, people still build tailor-made CMSes, because they
+want something that fits their needs exactly.
+
+This project deals with the creation of a Content Management System. This system will
+consist of two parts:
+- A backend that helps to manage content, page parts, and page structure
+- A frontend that displays the settings and content we just entered
+
+We will start this by creating an admin area and then create page parts with types. Page
+parts, which are like widgets, are fragments of content that can be moved around the page.
+Page parts also have types; for example, we can display videos in our left column or display
+news. So, the same content can be represented in multiple ways. For example, news can be a
+separate page as well as a page part if it needs to be displayed on the front page. These parts
+need to be enabled for the frontend. If enabled, then the frontend makes a call on the page
+part ID and renders it in the part where it is supposed to be displayed. We will do a frontend
+markup in Haml and Sass.
+
+Since we have used devise for all our projects so far, we will use the same strategy in this
+project. 
+
+добавляем пользователя
+rails g devise:install
+rails g devise user
+
+The only difference is that we will use it to log in to the admin account and manage
+the site's data. This needs to be done when we navigate to the URL/admin. We will do this
+by creating a namespace and routing our controller through the namespace. We will use our
+default application layout and assets for the admin area, whereas we will create a different
+set of layout and assets altogether for our frontend. Also, before starting with this first step,
+create an admin role using CanCan and rolify and associate it with the user model. 
+
+gem 'cancan'
+gem 'rolify'
+
+This will create a new file inside the models folder called ability:
+rails g cancan:ability
+
+We will now generate the role model and related migrations using the rolify generator:
+rails g rolify Role User
+This will also generate an initializer file and insert the rolify method in the
+user model:
+app/models/user.rb
+class User < ActiveRecord::Base
+  rolify
+  # Include default devise modules. Others available are:
+  # :confirmable, :lockable, :timeoutable and :omniauthable
+  devise :database_authenticatable, :registerable,:recoverable, 
+  :rememberable, :trackable, :validatable
+end
+
+Also, the role model has a reference to the join_table between users
+and roles :
+app/model/role.rb
+class Role < ActiveRecord::Base
+  has_and_belongs_to_many :users, :join_table => :users_roles
+  belongs_to :resource, :polymorphic => true
+  scopify
+end
+
+Once the role methods are generated, we will define the abilities of each user role:
+class Ability
+  include CanCan::Ability
+
+  def initialize(user)
+    # Define abilities for the passed in user here. For example:
+    #
+    #   user ||= User.new # guest user (not logged in)
+    #   if user.admin?
+    #     can :manage, :all
+    #   else
+    #     can :read, :all
+    #   end
+    #
+    # The first argument to `can` is the action you are giving the user 
+    # permission to do.
+    # If you pass :manage it will apply to every action. Other common actions
+    # here are :read, :create, :update and :destroy.
+    #
+    # The second argument is the resource the user can perform the action on. 
+    # If you pass :all it will apply to every resource. Otherwise pass a Ruby
+    # class of the resource.
+    #
+    # The third argument is an optional hash of conditions to further filter the
+    # objects.
+    # For example, here the user can only update published articles.
+    #
+    #   can :update, Article, :published => true
+    #
+    # See the wiki for details:
+    # https://github.com/ryanb/cancan/wiki/Defining-Abilities
+    user ||= User.new # guest user (not logged in)
+    if user.has_role? :admin
+      can :manage, :all
+    else
+      can :read, Organization
+      can :manage, Organization if user.has_role?(:owner, Organization)
+      can :write, Organization, :id => Organization.with_role(:manager, user).map(&:id)
+    end
+  end
+end
+
+We are going to use memcached for caching, hence we need to add it to our development stack. We
+will do this by installing it through our favorite package manager, for example, apt on Ubuntu:
+sudo apt-get install memcached
+
+устанавливаем mongodb
+sudo apt-get install mongodb-server
+
+Memcached is a key-value cache store that stores small fragments of data.
+
+gem 'mongoid', '~> 4'
+
+Bundle the application and run the mongoid generator:
+rails g mongoid:config
+
+You can edit config/mongoid.yml to suit your local system's settings as shown in the
+following code:
+
+We did this because ActiveRecord is the default Object Relationship Mapper (ORM). We will
+override it with the mongoid Object Document Mapper (ODM) in our application. Mongoid's
+configuration file is slightly different from the database.yml file for ActiveRecord. The
+session's rule in mongoid.yml opens a session from the Rails application to MongoDB.
+It will keep the session open as long as the server is up. It will also open the connection
+automatically if the server is down and it restarts after some time. Also, as a part of the
+installation, we need to add Haml to Gemfile and bundle it:
+
+gem 'haml'
+gem "haml-rails"
+
+Let's get cracking to create our admin area now:
+1.	 We will first generate our dashboard controller:
+rails g controller dashboard index
+
+2.	 We will then create a namespace called admin in our routes.rb file:
+config/routes.rb
+namespace :admin do
+get '', to: 'dashboard#index', as: '/'
+end
+
+3.	 We have also modified our dashboard route such that it is set as the root page in the
+admin namespace.
+
+4.	 Our dashboard controller will not work anymore now. In order for it to work, we
+will have to create a folder called admin inside our controllers and modify our
+DashboardController to Admin::DashboardController . This is to match
+the admin namespace we created in the routes.rb file:
+
+class Admin::DashboardController < ApplicationController
+  before_filter :authenticate_user!
+  def index
+  end
+end
+
+5.	 In order to make the login specific to the admin dashboard, we will copy our
+devise/sessions_controller.rb file to the controllers/admin path and
+edit it. We will add the admin namespace and allow only the admin role to log in:
+end
+
+In the following steps, we will create page management for our application. This will be the
+backbone of our application.
+1.	 Create a model, view, and controller for page. We will have a very simple page
+structure for now. We will create a page with title, body, and page type:
+
+rails g scaffold page title body page_type --force
+
+2.	 We need a home page for our main site. So, in order to set a home page, we will
+have to assign it the type home . However, we need two things from the home page:
+it should be the root of our main site and the layout should be different from the
+admin. In order to do this, we will start by creating an action called home_page in
+pages_controller :
+
+app/models/page.rb
+scope :home, ->{where(page_type: "Home")}
+
+app/controllers/pages_controller.rb
+def home_page
+  @page = Page.home.first rescue nil
+  render :layout => 'page_layout'
+end
+
+3.	 We will find a page with the home type and render a custom layout called
+page_layout , which is different from our application layout. We will do the same
+for the show action as well, as we are only going to use show to display the pages
+in the frontend:
+app/controllers/pages_controller.rb
+def show
+  render :layout => 'page_layout'
+end
+
+4.	 Now, in order to effectively manage the content, we need an editor. This will make
+things easier as the user will be able to style the content easily using it. We will use
+ckeditor in order to style the content in our application:
+Gemfile
+gem "ckeditor", :github => "galetahub/ckeditor"
+gem 'carrierwave', :github => "jnicklas/carrierwave"
+gem 'carrierwave-mongoid', :require => 'carrierwave/mongoid'
+gem 'mongoid-grid_fs', github: 'ahoward/mongoid-grid_fs'
+
+5.	 Add the ckeditor gem to Gemfile and run bundle install :
+helioscms$ rails generate ckeditor:install --orm=mongoid --backend=carrierwave
+
+6.	 This will generate a carrierwave uploader for CKEditor, which is compatible
+with mongoid.
+7.	 In order to finish the configuration, we need to add a line to application.js
+to load the ckeditor JavaScript:
+app/assets/application.js
+//= require ckeditor/init
+
+8.	 We will display the editor in the body as that's what we need to style:
+views/pages/_form.html.haml
+.field
+= f.label :body
+%br/
+= f.cktext_area :body, :rows => 20, :ckeditor => {:uiColor => "#AADC6E", :toolbar => "mini"}
+
+11.	 In order to display the content on the index page in a formatted manner, we will add
+the html_safe escape method to our body:
+views/pages/index.html.haml
+%td= page.body.html_safe
+
+13.	 At this point, we can manage the content using pages. However, in order to add
+nesting, we will have to create a parent-child structure for our pages. In order to do
+so, we will have to first generate a model to define this relationship:
+helioscms$ rails g model page_relationship parent_id:integer child_id:integer --force
+
+14.	 Inside the page_relationship model, we will define a two-way association with
+the page model:
+app/models/page_relationship.rb
+class PageRelationship
+  include Mongoid::Document
+  field :parent_idd, type: Integer
+  field :child_id, type: Integer
+  belongs_to :parent, :class_name => "Page"
+  belongs_to :child, :class_name => "Page"
+end
+
+15.	 In our page model, we will add inverse association. This is to check for both parent
+and child and span the tree both ways:
+has_many :child_page, :class_name => 'Page', :inverse_of => :parent_page
+belongs_to :parent_page, :class_name => 'Page', :inverse_of => :child_page
+
+16. We can now add a page to the form as a parent. Also, this method will create a tree
+structure and a parent-child relationship between the two pages:
+
+.field
+    = f.label "Parent"
+    %br/
+    = f.collection_select(:parent_page_id, Page.all, :id, :title, :class => "form-control")
+  .field
+    = f.label :body
+    %br/
+    = f.cktext_area :body, :rows => 20, :ckeditor => {:uiColor => "#AADC6E", :toolbar => "mini"}
+    -#= f.text_field :body
+  .actions
+    = f.submit 'Save', :class=>"btn btn-default"
+    = link_to 'Cancel', pages_path, :class=>"btn btn-danger"
+
+19.	 In order to display the parent, we will call it using the association we created:
+app/views/pages/index.html.haml
+- @pages.each do |page|
+%tr
+%td= page.title
+%td= page.body.html_safe
+%td= page.parent_page.title if page.parent_page
+
+This task deals with the creation and management of page parts. Page parts are snippets
+of code, which we will use to render in the page. These parts can be banners, YouTube
+video channels, photos, polls, and so on. We will create a model for page parts and this
+will effectively manage content for different parts of our page.
+
+We will begin by adding page parts to our CMS system:
+1.	 Generate the page parts model:
+heliouscms$rails g model part title:string content:string meta:string part_type_id:string
+
+2.	 We will now generate the model for part_types :
+:~/helioscms$ rails g model part_type name:string
+
+3.       We will now associate the parts and part_types fields:
+class PartType
+  include Mongoid::Document
+  field :name, type: String
+
+  has_many :parts
+end
+
+class Part
+  include Mongoid::Document
+  field :title, type: String
+  field :content, type: String
+  field :meta, type: String
+  field :part_type_id, type: String
+  field :user_id, type: String
+
+  belongs_to :page
+  belongs_to :part_type
+end
+
+4. Let's add some parts by firing up the Rails console:
+helioscms$ rails c
+part = Part.new
+part.title = "YouTube Channel"
+part.save!
+
+5.	 We will now add part types to the part form so that we can save it during
+their creation:
+app/views/parts/_form.html.haml
+.field
+= f.label :part_type_id
+= f.select(:part_type_id, options_from_collection_for_
+select(PartType.all, :id, :name), {:prompt => 'Please Choose'}, :class => "form-control")
+
+
+
+
+We have already created the backend and also set the base for the frontend. However, we
+need to start rendering the content in the front end. We also want a dynamically generated
+menu from the pages we have created. We want the backend to play well with the front end
+page we just created. In this task, we will add site-related information that renders all the
+content on the front end page
+
+1.	 We will first create a scaffold for the site details:
+rails g scaffold site_detail title organization address facebook twitter google_plus skype linkedin google_analytics telephone
+
+2.	 Be sure to remove the scaffolds.css.scss file, otherwise it will conflict with
+our default CSS.
+3.	 First generate the carrierwave uploader and call the uploaded file:
+helioscms$ rails g uploader file
+
+заполнить форму и сохранить
+
+
+
+
+
+In our CMS there are several kinds of assets. As we build themes we will beautify them
+with varied JavaScript, CSS, and images. In order to keep the speed of our sites fast in the
+frontend, we will use asset caching in Rails.

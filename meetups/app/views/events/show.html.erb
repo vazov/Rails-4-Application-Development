@@ -1,0 +1,69 @@
+<p id="notice"><%= notice %></p>
+
+<p>
+  <strong>Title:</strong>
+  <%= @event.title %>
+</p>
+
+<p>
+  <strong>Start date:</strong>
+  <%= @event.start_date %>
+</p>
+
+<p>
+  <strong>End date:</strong>
+  <%= @event.end_date %>
+</p>
+
+<p>
+  <strong>Location:</strong>
+  <%= @event.location %>
+</p>
+
+<p>
+  <strong>Agenda:</strong>
+  <%= @event.agenda %>
+</p>
+
+<p>
+  <strong>Address:</strong>
+  <%= @event.address %>
+</p>
+
+<label>Organized By:</label><br/>
+<%= image_tag avatar_url(@event_owner) %>
+<%= @event_owner.email %>
+<br/> 
+
+<label>Attendees</label>
+<% @attendees.each do |a|%>
+<%= image_tag avatar_url(a.user) %>
+<%= a.user.email%>
+<%end%>
+<br/>
+
+<p>
+  <strong>Tags:</strong>
+  <%= @event.all_tags %>
+</p>
+
+<% if user_signed_in? && @event.organizer_id == current_user.id%>
+  <label>Join Requests</label>
+  
+  <% @pending_requests = Event.pending_requests(@event.id) %>
+  <% if @pending_requests.present? %>
+    <% @pending_requests.each do |p|%>
+
+      <%= image_tag avatar_url(p.user) %>
+      <%= p.user.email%>
+      <%= link_to 'Accept', event_accept_request_path(:event_id => @event.id, :attendance_id => p.id), :class=>"btn btn-success btn-small" %>
+      <%= link_to 'Reject', event_reject_request_path(:event_id => @event.id, :attendance_id => p.id), :class=>"btn btn-danger btn-small" %>
+    <%end%>
+  <%else%>
+    <p>No Pending Requests for this event</p>
+  <%end%>
+<%end%>
+
+<%= link_to "Join", event_join_path(:event_id => @event.id ), :class=>"btn btn-success btn-small" %>
+<%= link_to 'Edit', edit_event_path(@event) %> |
+<%= link_to 'Back', events_path %>

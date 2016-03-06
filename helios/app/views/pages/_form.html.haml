@@ -1,0 +1,27 @@
+= form_for @page do |f|
+  - if @page.errors.any?
+    #error_explanation
+      %h2= "#{pluralize(@page.errors.count, "error")} prohibited this page from being saved:"
+      %ul
+        - @page.errors.full_messages.each do |msg|
+          %li= msg
+
+  .field
+    = f.label :title
+    = f.text_field :title, :class => "form-control"
+  .field
+    = f.label :page_type
+    -#= f.text_field :page_type
+    = f.select(:page_type, Page::PAGE_TYPE, {}, :class => "form-control")
+  .field
+    = f.label "Parent"
+    %br/
+    = f.collection_select(:parent_page_id, Page.all, :id, :title, :class => "form-control")
+  .field
+    = f.label :body
+    %br/
+    = f.cktext_area :body, :rows => 20, :ckeditor => {:uiColor => "#AADC6E", :toolbar => "mini"}
+    -#= f.text_field :body
+  .actions
+    = f.submit 'Save', :class=>"btn btn-default"
+    = link_to 'Cancel', pages_path, :class=>"btn btn-danger"

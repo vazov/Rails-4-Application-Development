@@ -1,0 +1,380 @@
+In this project, we will create a SaaS-based software to create restaurant menus. Users can
+sign up and will have their own subdomain and area; they will also have plans to select from.
+Along with this, they can also create products and menus and assign them to a restaurant.
+While building this project, we will take a look at concepts such as concerns, subdomains,
+creating plans, and managing a SaaS-based product. We will also see various ways to add
+roles to our application users, multitenancy in applications, and import and export data in
+various formats. Using these techniques, we can end up refactoring our code.
+
+While building this application, we will have to go through the following tasks:
+ - Creating organizations with signup
+ - Creating restaurants, menus, and items
+ - Creating user roles
+ - Creating plans
+ - Creating subdomains
+ - Adding multitenancy and reusable methods
+ - Creating a monthly payment model, adding a free trial plan, and monthly billing
+ - Exporting data to a CSV format
+
+Every user who creates a SignUp for our application will need an organization. This is
+because a business is not run in isolation, and there will be different stakeholders in the
+system; the service staff, chefs, and managers will all need access to the system. Now that we
+have defined the roles of different types of users of the system, we will bring them together
+on one level of abstraction called organization. In this task, we will build a wizard to set up an
+organization as a part of the SignUp process. We will use the wicked gem to create a wizard
+in our application.
+
+Маршрут начинаем с /home
+
+создаем шаблонное приложение
+создаем модели для организации и пользователя
+добавляем пользователя
+
+rails g devise:install
+rails g devise user
+
+добавляем организацию
+rails g model organization name:string description:text
+
+создаем ассоциации
+app/models/organization.rb
+has_and_belongs_to_many :users
+app/models/user.rb
+has_and_belongs_to_many :organizations
+
+In order to store the association data, we will create a table:
+rails g migration create_organizations_users organization_id:integer user_id:integer
+
+создаем контроллер для определения шагов
+rails g controller setup_organization
+
+включаем wizard module и определяем шаги
+app/controllers/setup_organization_controller.rb
+class SetupOrganizationController < ApplicationController
+  include Wicked::Wizard
+  steps :organization_setup
+end
+
+Первый шаг - sign up для этого создаем контроллер registrations_controller.rb
+наследуемый от devise
+rails g controller registrations и
+переопределяем метод after_sign_up_path_for
+class RegistrationsController < Devise::RegistrationsController
+	def after_sign_up_path_for(resource)
+       session[:plan_id] = params[:plan_id]
+       setup_organization_path(:organization_setup)
+    end
+end
+
+добавляем метод show в setup_organization_controller.rb
+def show
+    @user = current_user
+    case step
+     when :organization_setup
+       @organization = Organization.new
+    end
+    render_wizard
+  end
+
+создаем форму для организации
+app/views/setup_organizations/_wizard.html.erb
+и страницу organization_setup.html
+
+добавляем метод update в setup_organization_controller.rb
+def update
+    @user = current_user
+    @organization = Organization.new(organization_params)
+    @organization.users << @user
+    render_wizard @organization
+  end
+добавляем whitelist organization_params
+
+в конце регистрации перенаправляем на dashboard
+def redirect_to_finish_wizard(options = nil)
+    redirect_to dashboard_path, notice: "Thank you for signing up. You can now build beautiful menus"
+  end
+
+определяем маршруты
+resources :setup_organization
+devise_for :users, controllers: { registrations: "registrations" }
+
+create models for restaurants, menus, and items
+rails g scaffold restaurant name:string description:text slug:string
+rails g scaffold menu title:string description:text
+rails g model item name:string description:text price:float
+
+создаем ассоциации
+class Restaurant < ActiveRecord::Base
+  #extend FriendlyId
+  #friendly_id :name, use: :slugged
+  has_many :menus
+  belongs_to :organization
+  validates :name, presence: true
+end
+
+We will pass organization_id in the create method in the restaurant
+controller.
+def create
+@restaurant = Restaurant.new(restaurant_params)
+@restaurant.organization_id = current_user.organizations.first.id
+
+class Menu < ActiveRecord::Base
+belongs_to :restaurant
+has_many :items
+accepts_nested_attributes_for :items
+end
+
+On the restaurants show page, we need to add restaurant_id as a parameter so
+that it is passed as a parameter to find the menus related to a particular restaurant:
+def show
+  @menus = Menu.where(:restaurant_id => @restaurant.id)
+end
+
+Items do not have a controller and view separately. They will reside as a part of
+menu in our application. So, the attributes of items need to be whitelisted inside
+our menus_controller class:
+params.require(:menu).permit(:title, :description, :restaurant_id,
+      :items_attributes => [:id, :name, :description, :price, :destroy])
+
+Associate the item model with the menu:
+app/model/item.rb
+class Item < ActiveRecord::Base
+belongs_to :menu
+end
+
+We now need to build the views. At this point, we need to add the nested_form
+gem to our application:
+gem "nested_form"
+
+We will first convert our menu form to a nested form by adding nested_form_for :
+
+We will add the basics of the permissions framework in these steps:
+gem 'cancan'
+gem 'rolify'
+
+This will create a new file inside the models folder called ability:
+rails g cancan:ability
+rails g rolify Role User
+This will also generate an initializer file and insert the rolify method in the
+user model:
+
+Also, the role model has a reference to the join_table between users
+and roles :
+app/model/role.rb
+class Role < ActiveRecord::Base
+has_and_belongs_to_many :users, :join_table => :users_roles
+belongs_to :resource, :polymorphic => true
+scopify
+end
+
+Once the role methods are generated, we will define the abilities of each user role:
+class Ability
+  include CanCan::Ability
+  def initialize(user)
+    user ||= User.new # guest user (not logged in)
+    if user.has_role? :admin
+      can :manage, :all
+    else
+      can :read, Organization
+      can :manage, Organization if user.has_role?(:owner, Organization)
+      can :write, Organization, :id => Organization.with_role(:manager, user).map(&:id)
+    end
+  end
+end
+
+
+Generate a plan model by running the Rails generator:
+rails g model plan name:string restaurants:integer price:float tables:integer menu_items:integer storage:integer --force
+
+deprecated
+Student.find_or_create_by_name("Little Johnny DropTable")
+replaced
+Student.where(name: "Sally Sue", grade: 5).first_or_create
+
+We will now display these plans in the home page so that the user can compare
+them before signing up. For this, we will first create a home controller and
+home page:
+rails g migration add_plan_id_to_users plan_id:integer
+
+rails g controller home index
+app/controllers/home_controller.rb
+class HomeController < ApplicationController
+ def index
+  @plans = Plan.all.to_a
+ end
+end
+
+We need to display the selected plan on our registration page. In order to do so,
+we will use pluck. As we need only the plan name, we will just use pluck to call
+the name of the plan with ID as the parameter. We will add the following in our
+registrations_controller.rb file:
+app/holders/application_helper.rb
+module ApplicationHelper
+def plan_name(plan_id)
+	
+plan_name = Plan.where(:id=> plan_id).pluck(:name).first
+end
+end
+
+Associate plan and user . In order to associate an organization to a plan , we
+will associate it via user . This will give a user the freedom to create multiple
+organizations and get billed for it through their own account. We will define
+them in our models:
+models/plan.rb
+belongs_to :user
+models/user.rb
+has_one :plan
+
+We will now save plan IDs along with the user details. This is essential in order to
+keep a track of the subscription of each plan in accordance with the resources being
+used by each subscriber. In order to do so, we will first add plan_id to the user:
+rails g migration add_plan_id_to_users plan_id:integer
+
+rails generate devise:views
+that will place the view files in the views directory
+
+Let us create subdomains for our application users:
+
+
+rails g migration add_name_to_users name
+
+class RegistrationsController < Devise::RegistrationsController
+private
+      def sign_up_params
+        params.require(:user).permit(:name, :organization_name, :email, :password, :password_confirmation,
+        :plan_id, :active, :first_name, :last_name)
+      end
+
+      def account_update_params
+        params.require(:user).permit(:name, :organization_name, :email, :password, :password_confirmation,
+        :plan_id, :active, :first_name, :last_name, :current_password)
+      end
+
+We will first save the domain as a part of our SignUp form:
+
+In order to create subdomains, we need a class that passes the value of the request
+and matches the format of a subdomain. As www is not considered a valid subdomain
+rule, we will check for this and make it nil :
+lib/subdomain.rb
+class Subdomain
+def self..matches?(request)
+case request.subdomain
+when 'www', '', nil
+false
+else
+true
+end
+end
+end
+
+Once this method is set up, we will make a call inside our controller. In order to
+make only the authenticated user log in, we will create dashboard_controller
+and add an authenticate_user! filter to it. Dashboard is the page where we
+can see our activity stream:
+rails g controller dashboard
+app/controllers/dashboard_controller.rb
+before_filter :load_subdomain
+def show
+@user = User.where(:name => request.subdomain).first || not_
+found
+@user.organizations.each do |o|
+@organization_name = o.name
+end
+end
+def not_found
+raise ActionController::RoutingError.new('User Not Found')
+end
+def load_subdomain
+@user = User.where(:domain_name => request.subdomain).first
+end
+
+Wire this concern to the route. We will pass our subdomain class as a constraint in
+order to check the subdomain format as soon as the request is made. Also, we will
+see if the user has been authenticated or not and based on this, we will redirect him
+or her to the respective organization's dashboard:
+config/routes.rb
+authenticated do
+get '/' => 'dashboard#show', :constraints => Subdomain, :as
+=> 'dashboard'
+end
+
+
+Create a method in order to first check if there is a value of subdomain supplied or
+not. If it is present, it will append the subdomain, domain, and port. We also check
+for the presence of a hash key called subdomain . If the key is present, it will add the
+value of the host to the value of the with_subdomain method:
+
+module Concerns
+  module Url
+  extend ActiveSupport::Concern
+  def with_subdomain(subdomain)
+    subdomain = (subdomain || "")
+    subdomain += "." unless subdomain.empty?
+    [subdomain, request.domain, request.port_string].join
+  end
+  
+  def url_for(options = nil)
+    if options.kind_of?(Hash) && options.has_key?(:subdomain)
+      options[:host] = with_subdomain(options.delete(:subdomain))
+    end
+    super
+  end
+  end
+end
+
+In order to execute this Url manipulation, we will need to include this in the
+application controller and extend it:
+controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  include Concerns::Url
+end
+
+Now that domains are there, we will have to ensure that the sessions of each
+subdomain are different from the other. By adding a :domain => :all method,
+we will have a different session store for each subdomain:
+config/initializers/session_store.rb
+Gotable::Application.config.session_store :cookie_store, key:'_
+gotable_session', :domain => :all
+
+We have already set up subdomains in order to create separate areas for each organization.
+However, we have to make sure that the users from one organization do not see data
+from another organization. A clear separation of this data visibility is called multitenancy.
+The concept can be compared to renting out apartments to multiple tenants. We will add
+multitenancy in our application by adding a simple method in our model concern.
+
+Next up, we will create the multitenant model of our application. Let's see how. We
+will first create a separate class to handle the tenants. This class will handle all the
+code related to tenancy:
+:~/gotable/app/models$ touch tenant.rb
+
+Now, we will show only the restaurants that are available to a particular organization
+for a particular role. For this, we will first check for the role associated with the
+user object. Then, we will create a scope to find the restaurants with a particular
+organization_id associated with them:
+App/models/tenant.rb
+def restaurants
+admin? ? Restaurant.all.all : Restaurant.where('organization_
+id = ?', user.organizations.first.id).all
+end
+
+We will then set this as a filter for our entire application. We will pass
+current_user from devise as the user object:
+controllers/application_controller.rb
+before_filter :enable_tenant
+def enable_tenant
+@current_tenant ||= Tenant.new(current_user)
+end
+
+Finally, make a call in the controller and call the Tenant class before finding the
+value of restaurants. In this way, if a user is the owner of a restaurant, only the
+restaurants owned by him or her are visible to them:
+app/views/controllers/restaurants_controller.rb
+def index
+if params[:id].present?
+@restaurants = @current_tenant.restaurants.find(params[:id])
+end
+end
+
+rails g model transactions user_id:integer status:boolean amount:decimal first_name last_name created_at:datetime updated_at:datetime
+
+config.autoload_paths += Dir["#{config.root}/lib/**/"] in config/application.rb

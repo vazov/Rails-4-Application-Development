@@ -1,0 +1,326 @@
+rails g model event
+create_table "events", force: true do |t|
+t.string "title"
+t.datetime "start_date"
+t.datetime "end_date"
+t.string  "location"
+t.text "agenda"
+t.text "address"
+t.integer "organizer_id"
+t.datetime "created_at"
+t.datetime "updated_at"
+end
+
+class Event < ActiveRecord::Base belongs_to :organizers, class_name: "User" end
+
+добавляем пользователя
+rails g devise:install
+rails g devise user
+config/routes.rb
+devise_for :users
+
+добавляем ассоциации с другими именами
+app/models/event.rb
+class Event < ActiveRecord::Base belongs_to :organizers, class_name: "User" end
+
+class User < ActiveRecord::Base
+devise :database_authenticatable, :registerable, :recoverable, :rememberable, :trackable, :validatable
+has_many :organized_events, class_name: "Event", foreign_key: "organizer_id"
+end
+
+создаем событие 
+app/controllers/events_controller.rb
+def create
+  @event = current_user.organized_events.new(event_params)
+
+так как метод зависит от current_user объекта добавляем before_filter объект
+app/controllers/events_controller.rb
+before_filter :authenticate_user!
+
+добавляем before_filter method
+app/controllers/events_controller.rb
+def event_owner!
+  authenticate_user!
+  if @event.organizer_id != current_user.id
+    redirect_to events_path
+    flash[:notice] = 'You do not have enough permissions to do this'
+  end
+end
+
+добавляем slug (заменяет id в адресе строки на выражение из ключевых слов)
+rails g migration add_slug_to_events slug:string
+event.rb
+extend FriendlyId
+friendly_id :title, use: :slugged
+rails generate friendly_id
+
+добавляем тэги
+rails g model tag name:string
+создаем соединение
+rails g model tagging tag:belongs_to event:belongs_to
+создаем ассоциации
+class Event < ActiveRecord::Base
+	has_many :taggings
+	has_many :tags, through: :taggings
+
+class Tag < ActiveRecord::Base
+	has_many :taggings
+	has_many :events, through: :taggings
+
+создаем метод для записи тегов в список
+def all_tags=(names)
+  self.tags = names.split(",").map do |t|
+    Tag.where(name: t.strip).first_or_create!
+  end
+
+добавляем all_tags как виртуальный аттрибут в контроллер
+params.require(:event).permit(:title, :start_date,:start_time, :location, :agenda, :address,
+:organizer_id, :all_tags)
+
+добавляем список тэгов в форму
+app/views/events/_form.html.erb
+<div class="field">
+  <%= f.label :all_tags, "List All Tags, separate each tag by a comma" %><br />
+  <%= f.text_field :all_tags %>
+</div>
+
+извлечение тэгов из базы данных
+app/models/event.rb
+def all_tags
+  tags.map(&:name).join(", ")
+end
+
+отображем значения тэгов
+app/views/events/show.html.erb
+<%= event.all_tags %>
+или
+<%=raw event.tags.map(&:name).map { |t| t }.join(', ')%>
+
+создаем облако тэгов
+если в запросе страницы присутствует параметр :tag то переменной @events
+присваиваем только записи с этим тэгом
+app/controllers/events_controller.rb
+def index
+  if params[:tag]
+    @events = Event.tagged_with(params[:tag])
+  else
+    @events = Event.all
+  end
+end
+
+добавляем ссылки для тэгов
+app/views/events/index.html.erb
+<td><%= event.all_tags.split(", ").map { |t| link_to t, tag_path(t)}.join(",").html_safe %></td>
+
+определяем tag_path в роутах
+config/routes.rb
+get 'tags/:tag', to: 'events#index', as: :tag
+
+определяем метод tagged_with для поиска событий с определенным тэгом
+app/models/event.rb
+def self.tagged_with(name)
+  Tag.find_by_name!(name).events
+end
+
+добавляем метод для подсчета тэгов ассоциированных со всеми событиями
+app/models/event.rb
+def self.tag_counts
+  Tag.select("tags.name, count(taggings.tag_id) as count").
+  joins(:taggings).group("taggings.tag_id")
+end
+
+добавляем хэлпер для подсчета и округления
+app/helper/application_helper.rb
+def tag_cloud(tags, classes)
+  max = tags.sort_by(&:count).last
+  tags.each do |tag|
+    index = tag.count.to_f / max.count * (classes.size - 1)
+    yield(tag, classes[index.round])
+  end
+end
+
+отображаем облако
+app/views/events/index.html.erb
+<div class="col-lg-4">
+  <h3>Search Tags</h3>
+  <div>
+    <% tag_cloud Event.tag_counts, %w{css1 css2 css3 css4} do |tag, css_class| %>
+      <%= link_to tag.name, tag_path(tag.name), class: css_class %>
+    <% end %>
+  </div>
+</div>
+<br>
+
+добавляем граватар пользователю
+app/helpers/application_helpers.rb
+def avatar_url(user)
+  gravatar_id = Digest::MD5::hexdigest(user.email).downcase
+  "http://gravatar.com/avatar/#{gravatar_id}.png"
+end
+
+добавляем метод в модель события для поиска организатора события
+app/models/event.rb
+def self.event_owner(organizer_id)
+User.find_by id: organizer_id
+
+в контроллере делаем вызов этого метода
+app/controllers/events_controller.rb
+def show
+  @event_owner = Event.event_owner(@event.organizer_id)
+end
+
+вызываем хэлпер метод для отображения граватара
+app/views/events/show.html.erb
+<label>Organized By:</label><br/>
+<% @event_owners.each do |event_owner|%>
+<%= image_tag avatar_url(event_owner) %>
+<%= event_owner.email %>
+<br/>
+
+RSVP — это запрос ответа от приглашенного человека или людей
+Для того чтобы создать RVSP нам нужно разрешить запросы на добавление к событиюю
+В этой задаче мы разрешим пользователям делать запроы на добавление к событию
+Таким образом мы сгенерируем список пользователей добавившихся к событию Мы создадим модель 
+названную attendance где соединим события с пользователями. Это сделано для того чтобы разрешить
+многочисленным пользователям добавляться к многим событиям
+
+rails g model attendance user_id:integer event_id:integer
+
+добавляем ассоциации
+app/models/attendance.rb
+belongs_to :event
+belongs_to :user
+
+app/models/user.rb
+has_many :attendances
+has_many :events, :through => :attendances
+
+app/models/event.rb
+has_many :attendances
+has_many :users, :through => :attendances
+
+в контроллере создаем attendance и передаем event ID и user ID
+app/models/attendance.rb
+def self.join_event(user_id, event_id,state)
+  self.create(user_id: user_id, event_id: event_id, state: state)
+end
+
+app/controllers/events_controller.rb
+def join
+  @attendance = Attendance.join_event(current_user.id, params[:event_id], 'request_sent')
+    'Request Sent' if @attendance.save
+    respond_with @attendance
+end
+
+добавляем ссылку join для пользователей
+app/views/events/show.html.erb
+<%= link_to "Join", event_join_path(:event_id => @event.id), :class=>"btn btn-success btn-small" %>
+
+добавляем маршрутизацию
+config/routes.rb
+  resources :events do
+    get :join, to: 'events#join', as: 'join
+  end
+
+Модерация событий. Мы посмотрим на конечный автомат в этой задаче, используя gem workflow
+для создания и управления состояниями. Модерация это многошаговый процесс, который включает себя
+- запрос пользователя 
+- принятие или отказ пользовательского запроса
+
+rails g migration add_state_to_attendance state:string
+
+включаем workflow метод в attendance model
+app/models/attendance.rb
+  include Workflow
+  workflow_column :state
+
+определяем состояния в attendance model
+app/models/attendance.rb
+workflow do
+  state :request_sent do
+  event :accept, :transitions_to => :accepted
+  event :reject, :transitions_to => :rejected
+end
+  state :accepted
+  state :rejected
+end
+
+однако нам нужно установить начальное состояние, т.е request_sent.
+мы сделаем это сохраняя это с помощью join метода
+app/controllers/events_controller.rb
+def join
+@attendance = Attendance.join_event(current_user.id, params[:event_id], 'request_sent')
+end
+
+переключим состояние пользовательских намерений на accept или reject
+app/controllers/events_controller.rb
+before_action :set_event, only: [:show, :edit, :update,:destroy, :accept_request, :reject_request]
+
+def accept_request
+  @attendance = Attendance.find_by(id: params[:attendance_id]) rescue nil
+  @attendance.accept!
+  'Applicant Accepted' if @attendance.save
+  respond_with(@attendance)
+end
+
+def reject_request
+   @attendance = Attendance.where(params[:attendance_id]) rescue nil
+   @attendance.reject!
+   'Applicant Rejected' if @attendance.save
+   respond_with(@attendance)
+end
+
+добавляем маршрутизацию
+resources :events  do
+    get 'join', to: 'events#join', as: 'join' 
+    get :accept_request, to: 'events#accept_request', as: 'accept_request' 
+    get :reject_request, to: 'events#reject_request', as: 'reject_request' 
+  end
+
+отобразим запросы для владельца события, добавив метод класса в event модель
+app/views/event.rb
+def self.pending_requests(event_id)
+  Attendance.where(event_id: event_id, state: 'request_sent')
+end
+
+отобразим их теперь в view
+<% if user_signed_in? && @event.organizer_id == current_user.id%>
+  <label>Join Requests</label>
+  
+  <% @pending_requests = Event.pending_requests(@event.id) %>
+  <% if @pending_requests.present? %>
+    <% @pending_requests.each do |p|%>
+
+      <%= image_tag avatar_url(p.user) %>
+      <%= p.user.email%>
+      <%= link_to 'Accept', event_accept_request_path(:event_id => @event.id, :attendance_id => p.id), :class=>"btn btn-success btn-small" %>
+      <%= link_to 'Reject', event_reject_request_path(:event_id => @event.id, :attendance_id => p.id), :class=>"btn btn-danger btn-small" %>
+    <%end%>
+  <%else%>
+    <p>No Pending Requests for this event</p>
+  <%end%>
+<%end%>
+
+отобразим принятых пользователей
+для этого сначала создадим видимость в модели attendance 
+app/model/attendance.rb
+scope :accepted, -> {where(state: 'accepted')}
+
+app/model/event.rb
+def self.show_accepted_attendees(event_id)
+  Attendance.accepted.where(event_id: event_id)
+end
+
+вызовем эту видимость в контроллере
+@attendees = Event.show_accepted_attendees(@event.id)
+
+отобразим attendees на странице события
+<label>Attendees</label>
+<% @attendees.each do |a|%>
+<%= image_tag avatar_url(a.user) %>
+<%= a.user.email%>
+<%end%>
+<br/>
+
+
+

@@ -1,0 +1,25 @@
+%h1 Listing articles
+
+%table.table.table-striped
+  %thead
+    %tr
+      %th Article
+      %th Clicks
+      %th Impressions
+      %th
+      %th
+      %th
+
+  %tbody
+    - @articles.each do |article|
+      %tr
+        %td= link_to article.title, article
+        %td= article.track_clicks_per_article
+        %td= article.impressionist_count
+        %td= link_to 'Show', article
+        %td= link_to 'Edit', edit_article_path(article)
+        %td= link_to 'Destroy', article, :method => :delete, :data => { :confirm => 'Are you sure?' }
+
+%br
+
+= link_to 'New Article', new_article_path

@@ -1,0 +1,107 @@
+До создания загрузочных методов, создадим две модели и контрллеры для board и pin
+rails g scaffold board title:string description:text
+rails g scaffold pin name:string image:string board_id:integer
+создаем ассоциацию между pin и board
+models/pin.rb
+belongs_to :board
+models/board.rb
+has_many :pins
+
+добавляем пользователя
+rails g devise:install
+rails g devise user
+
+создаем ассоциацию между пользователем и boards, добавляем маршрут
+models/board.rb
+belongs_to :user
+models/user.rb
+has_many :boards
+
+config/routes.rb
+devise_for :users
+
+добавляем friendly_id
+models/board.rb
+extend FriendlyId
+friendly_id :title, use: :slugged
+
+models/pin.rb
+extend FriendlyId
+friendly_id :name, use: :slugged
+
+используем гем carrierwave для создания методов загрузки изображений
+и гем rmagick для обработки
+
+генерируем uploader file
+rails g uploader image create app/uploaders/image_uploader.rb
+
+используем файловую систему для сохранения файлов здесь. файлы переименовываем для
+соответствия модели
+app/uploaders/image_uploader.rb
+storage :file
+def store_dir
+Rails.env.production? ? (environment_folder = "production") :
+(environment_folder = "test")
+"uploads/#{environment_folder}/#{model.class.to_s.underscore}/#{mounted_as}/#{model.id}"
+end
+
+эти uploaders могут быть смонтированы на множество моеделй в нашей pin модели
+mount_uploader :image, ImageUploader
+
+!! ошибка добавление существующего аттрибута image имелось ввиду image_cache?
+At this point, we need to add image attributes to our pin model:
+rails g migration add_image_to_pins image:string 
+
+добавляем image parameters в whitelist
+app/controllers/pins_controller.rb
+def pin_params
+params.require(:pin).permit(:name, :image, :image_cache, :board_id)
+end
+
+The carrierwave gem maps the f.file_field form helper to the carrierwave
+uploader method in order to upload the files. So we can add this to our form:
+app/views/pins/_form.html.erb
+<div class="field">
+  <%= @pin.image_url if @pin.image? %>
+  <%= f.file_field :image %>
+  <%= f.hidden_field :image_cache %>
+</div>
+
+отображаем изображения
+app/views/pins/index.html.erb
+<%=link_to(image_tag(pin.image.url, :width=>"200", :height=>"200"), pin) %>
+
+конфигурируем uploader.rb
+app/uploaders/image_uploader.rb
+include CarrierWave::RMagick
+
+# Create different versions of your uploaded files:
+version :thumb do
+  process :resize_to_fit => [200, 200]
+end
+version :normal do
+  process :resize_to_fit => [350, 350]
+end
+
+After defining the geometries, we need our already uploaded files to be resized to
+the specified geometries. In order to do so, we will first create a migration:
+$ rails g migration recreate_old_thumbnails
+
+db/migrate/20140130033618_recreate_old_thumbnails.rb
+class RecreateOldThumbnails < ActiveRecord::Migration
+  def up
+    Pin.all.each {|p| p.image.recreate_versions! if p.image}
+  end
+  def down
+  end
+end
+
+For the index page, modify views to call certain geometries on a certain page:
+app/views/pins/index.html.erb
+<%=link_to(image_tag(pin.image.thumb.url), pin) %>
+
+
+Similarly for the show page, modify views as explained in the preceding point:
+app/views/pins/show.html.erb
+<%=image_tag @pin.image.normal.url %>
+

@@ -1,0 +1,32 @@
+<script>
+var url = "/admin/dashboard/clicks.json"
+var click_json= $.getJSON(url, null, function(data) {
+	var get_click_data = click_json.responseText;
+    new Morris.Line({
+    	element: 'click_chart', 
+    	data: $.parseJSON((get_click_data)), 
+    	xkey: 'date', 
+    	ykeys: ['clicks'], 
+    	labels: ['Clicks'] });
+        done();				
+    });
+</script>
+
+<script>
+var url = "/admin/dashboard/impressions.json"
+var json=json= $.getJSON(url, null, function(data) {
+var get_impression_data = json.responseText;
+new Morris.Bar({
+element: 'impressions_chart',
+data: $.parseJSON((get_impression_data)),
+xkey: 'date',
+ykeys: ['impressions'],
+labels: ['Impressions']
+});
+});
+</script>
+<h3>Clicks Per Day</h3>
+<div id="click_chart" style="height: 250px;"></div>
+<h3>Impressions Per Day</h3>
+<div id="impressions_chart" style="height: 250px;"></div>
+																																																																																																																																														

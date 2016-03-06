@@ -1,0 +1,46 @@
+<% @f = Recipe.find(params[:id]) %>
+  
+<p>
+  <strong>Title:</strong>
+  <%= @f.title %>
+</p>
+
+<p>
+  <strong>Cooking Time:</strong>
+  <%= @f.cooking_time %>
+</p>
+
+<p>
+  <strong>Difficulty_level:</strong>
+  <%= @f.difficulty_level %>
+</p>
+
+<p>
+  <strong>Food Type:</strong>
+  <%= @f.food_type.name %>
+</p>
+
+<p>
+  <strong>Food Preference:</strong>
+  <%= @f.food_preference.name %>
+</p>
+<p>
+  <strong>Cuisine:</strong>
+  <%= @f.cuisine.name %>
+</p>
+<p>
+  <strong>Ingredients:</strong>
+  <%= @f.ingredients %>
+</p>
+
+<p>
+  <strong>Text:</strong>
+  <%= @f.text %>
+</p>
+
+<p>
+  <strong>Procedure:</strong>
+  <%= @f.procedure %>
+</p>
+
+
